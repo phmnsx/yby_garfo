@@ -1,67 +1,70 @@
 import streamlit as st
 import os
 import random
-import time
-from mangaba import Agent
+from mangaba import Agent, Task, Crew, Process
 
-# --- 0. CONFIGURAÇÃO DE AMBIENTE E SEGURANÇA ---
-# Configura para usar o modelo Flash (mais rápido para demos)
+# --- 0. CONFIGURAÇÃO DE AMBIENTE ---
+# Define o modelo Gemini Flash (Mais rápido e barato para Hackathon)
 os.environ["MODEL_NAME"] = "gemini-1.5-flash"
 os.environ["LLM_PROVIDER"] = "google"
 
-# Tenta carregar a chave dos Segredos do Streamlit (Nuvem)
+# Gerenciamento de Chaves (Nuvem vs Local)
 if "GOOGLE_API_KEY" in st.secrets:
     os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 else:
-    # Fallback para local (se você tiver um .env ou quiser testar sem secrets)
+    # Se não houver secrets, verifica variável de ambiente local
     if "GOOGLE_API_KEY" not in os.environ:
-        # Dica visual se a chave faltar
-        st.warning("⚠️ API Key não detectada! Configure os 'Secrets' no Streamlit Cloud.")
+        st.warning("⚠️ API Key não encontrada! Configure os 'Secrets' no Streamlit Cloud.")
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="YBY.AI - Monitoramento Inteligente",
+    page_title="YBY.AI - Inteligência Agronômica",
     page_icon="🌱",
     layout="wide"
 )
 
-# --- 1. DEFINIÇÃO DOS AGENTES (GUARDRAILS) ---
-# O "Backstory" atua como um guardrail (trava de segurança)
-GUARDRAIL_PROMPT = """
-VOCÊ É UM SISTEMA CRÍTICO DE AGRICULTURA.
-REGRAS ABSOLUTAS:
-1. Responda APENAS sobre agricultura, manejo de solo, pragas e clima.
-2. Se perguntarem sobre política, esportes ou receitas culinárias: RECUSE. Diga: "Sou calibrado apenas para assistência técnica rural."
-3. Seja técnico, direto e use linguagem de extensionista rural.
-"""
+# --- 1. MOTOR DE INTELIGÊNCIA (MANGABA v2.0) ---
+def executar_crew(role, goal, backstory, input_usuario):
+    """
+    Função wrapper que cria e executa uma Crew do Mangaba para uma tarefa específica.
+    """
+    try:
+        # 1. Definir o Agente
+        agente = Agent(
+            role=role,
+            goal=goal,
+            backstory=backstory,
+            verbose=True,
+            allow_delegation=False
+        )
 
-@st.cache_resource
-def get_agents():
-    """Cria os agentes Mangaba uma única vez para economizar recursos."""
-    return {
-        "quimico": Agent(
-            role="Engenheiro Agrônomo (Nutrição)",
-            goal="Calcular correção de solo NPK.",
-            backstory=f"{GUARDRAIL_PROMPT} Especialista em química do solo e fertilizantes comerciais.",
-            verbose=True
-        ),
-        "ecologico": Agent(
-            role="Especialista em Agroecologia",
-            goal="Sugerir manejo sustentável para seca.",
-            backstory=f"{GUARDRAIL_PROMPT} Especialista em semiárido, retenção de água e adubação verde.",
-            verbose=True
-        ),
-        "chat": Agent(
-            role="Assistente de Campo",
-            goal="Tirar dúvidas rápidas do produtor.",
-            backstory=f"{GUARDRAIL_PROMPT} Assistente virtual amigável para WhatsApp rural.",
+        # 2. Definir a Tarefa
+        tarefa = Task(
+            description=input_usuario,
+            expected_output="Uma resposta técnica, formatada em Markdown, direta e em português do Brasil.",
+            agent=agente
+        )
+
+        # 3. Orquestrar a Crew
+        equipe = Crew(
+            agents=[agente],
+            tasks=[tarefa],
+            process=Process.SEQUENTIAL,
             verbose=True
         )
-    }
 
-# --- 2. SIMULADOR IOT (DADOS) ---
-st.sidebar.image("https://img.shields.io/badge/YBY.AI-Powered_by_Gemini_Flash-blue", use_container_width=True)
+        # 4. Executar
+        resultado = equipe.kickoff()
+        return resultado
 
+    except Exception as e:
+        return f"❌ Erro na execução da IA: {str(e)}. Verifique sua Chave de API."
+
+# --- 2. SIMULADOR IOT (BARRA LATERAL) ---
+st.sidebar.image("https://img.shields.io/badge/YBY.AI-Powered_by_Gemini-green", use_container_width=True)
+st.sidebar.markdown("### 📡 Telemetria em Tempo Real")
+
+# Inicialização do Estado
 if 'iot_data' not in st.session_state:
     st.session_state['iot_data'] = {
         'Temperatura': 29.5, 'Umidade': 40.0, 'Solo_Umid': 25.0,
@@ -69,31 +72,32 @@ if 'iot_data' not in st.session_state:
         'N': 12, 'P': 8, 'K': 15
     }
 
-if st.sidebar.button("🔄 Atualizar Sensores (IoT)"):
+# Botão de Atualização dos Sensores
+if st.sidebar.button("🔄 Ler Sensores (Simulação)"):
     culturas = ['Milho', 'Feijão', 'Palma Forrageira', 'Mandioca', 'Caju']
     solos = ['Arenoso', 'Argiloso', 'Misto', 'Salino']
     
     st.session_state['iot_data'] = {
         'Temperatura': round(random.uniform(26, 39), 1),
         'Umidade': round(random.uniform(30, 65), 1),
-        'Solo_Umid': round(random.uniform(10, 55), 1), # Tende a seco no semiárido
+        'Solo_Umid': round(random.uniform(10, 55), 1), # Tende a seco (Semiárido)
         'Tipo_Solo': random.choice(solos),
         'Cultura': random.choice(culturas),
         'N': random.randint(5, 50),
         'P': random.randint(5, 40),
         'K': random.randint(5, 50)
     }
-    st.sidebar.success("📡 Dados recebidos da estação!")
+    st.sidebar.success("Dados atualizados!")
 
 d = st.session_state['iot_data']
 
-# Métricas Visuais
-c1, c2 = st.sidebar.columns(2)
-c1.metric("🌡️ Temp", f"{d['Temperatura']}°C")
-c2.metric("💧 Solo", f"{d['Solo_Umid']}%", delta="-Crítico" if d['Solo_Umid'] < 30 else "Estável")
+# Exibição dos Cards
+col1, col2 = st.sidebar.columns(2)
+col1.metric("🌡️ Temp", f"{d['Temperatura']}°C")
+col2.metric("💧 Solo", f"{d['Solo_Umid']}%", delta="-Crítico" if d['Solo_Umid'] < 30 else "Estável")
 st.sidebar.info(f"Solo: **{d['Tipo_Solo']}** | Cultura: **{d['Cultura']}**")
 
-st.sidebar.markdown("### Nutrientes (mg/dm³)")
+st.sidebar.markdown("### Nutrientes (Análise Rápida)")
 col_n, col_p, col_k = st.sidebar.columns(3)
 col_n.metric("N", d['N'])
 col_p.metric("P", d['P'])
@@ -101,60 +105,81 @@ col_k.metric("K", d['K'])
 
 # --- 3. INTERFACE PRINCIPAL ---
 st.title("🥭 YBY.AI: Inteligência do Semiárido")
-st.markdown("Sistema de decisão agronômica em tempo real.")
+st.markdown("Plataforma de decisão agronômica focada em precisão e sustentabilidade.")
 
-tab1, tab2 = st.tabs(["📊 Diagnóstico & Manejo", "💬 Consultor Virtual"])
+tab1, tab2 = st.tabs(["📊 Painel de Decisão", "💬 Consultor Virtual"])
 
-# ABA 1: RELATÓRIOS TÉCNICOS
+# ABA 1: RELATÓRIOS ESTRUTURADOS
 with tab1:
-    st.subheader("Central de Decisão")
+    st.subheader("Diagnóstico e Prescrição")
     
     col_left, col_right = st.columns(2)
     
-    # --- BOTÃO 1: QUÍMICO ---
+    # --- COLUNA 1: QUÍMICA DE PRECISÃO ---
     with col_left:
-        st.markdown("#### 1. Correção Química (NPK)")
-        st.caption("Foco em produtividade imediata.")
+        st.markdown("#### 1. Correção Química (Dose Econômica)")
+        st.caption("Cálculo estequiométrico para evitar desperdício de insumos.")
         
-        if st.button("💊 Gerar Recomendação Química", use_container_width=True):
-            with st.spinner("Agente Químico calculando dosagem..."):
-                prompt = (
-                    f"Analise estes dados de solo do semiárido: Solo {d['Tipo_Solo']}, Cultura {d['Cultura']}. "
-                    f"Níveis: N={d['N']}, P={d['P']}, K={d['K']}. Temp={d['Temperatura']}C. "
-                    f"Recomende um fertilizante comercial (ex: Ureia, NPK 14-35-14) e explique o motivo técnico em 2 linhas."
+        if st.button("💊 Calcular Dosagem (Kg/ha)", use_container_width=True):
+            with st.spinner("Realizando balanço nutricional..."):
+                
+                # Prompt Engenharia: Focado em economia e precisão
+                prompt_quimico = (
+                    f"ATUE COMO UM AGRÔNOMO DE PRECISÃO.\n"
+                    f"DADOS REAIS DOS SENSORES:\n"
+                    f"- Cultura: {d['Cultura']}\n"
+                    f"- Solo: {d['Tipo_Solo']}\n"
+                    f"- Níveis Atuais: Nitrogênio={d['N']} mg, Fósforo={d['P']} mg, Potássio={d['K']} mg.\n\n"
+                    f"Sua missão é economizar dinheiro do produtor e salvar o solo.\n"
+                    f"1. Identifique qual nutriente é o limitante (Lei de Liebig).\n"
+                    f"2. Recomende APENAS o fertilizante necessário (ex: Ureia, Superfosfato, Cloreto).\n"
+                    f"3. CALCULE A DOSE EXATA em kg/hectare para uma produtividade média.\n"
+                    f"4. ALERTA: Se os níveis estiverem bons, diga explicitamente: 'Não aplicar nada'. Evite excessos."
                 )
-                try:
-                    agentes = get_agents()
-                    res = agentes["quimico"].chat(prompt)
-                    st.success("Recomendação Aprovada:")
-                    st.markdown(res)
-                except Exception as e:
-                    st.error(f"Erro na API: {e}")
+                
+                res = executar_crew(
+                    role="Engenheiro de Fertilidade do Solo",
+                    goal="Gerar recomendação de adubação precisa, econômica e sem desperdícios.",
+                    backstory="Você é um especialista rigoroso. Você odeia desperdício de fertilizante. Você segue estritamente tabelas técnicas.",
+                    input_usuario=prompt_quimico
+                )
+                
+                st.success("Prescrição Gerada:")
+                st.markdown(res)
 
-    # --- BOTÃO 2: ECOLÓGICO ---
+    # --- COLUNA 2: MANEJO ECOLÓGICO ---
     with col_right:
-        st.markdown("#### 2. Manejo Ecológico")
-        st.caption("Foco em sustentabilidade e água.")
+        st.markdown("#### 2. Manejo Regenerativo")
+        st.caption("Estratégias de convivência com a seca e saúde do solo.")
         
-        if st.button("🌳 Gerar Plano Regenerativo", use_container_width=True):
-            with st.spinner("Agente Ecológico consultando base..."):
-                prompt = (
-                    f"Crie um plano de ação para {d['Cultura']} no semiárido brasileiro. "
-                    f"Situação: Solo {d['Tipo_Solo']}, Umidade {d['Solo_Umid']}% (Baixa), Temp {d['Temperatura']}C. "
-                    f"Liste 3 técnicas de convivência com a seca (ex: Mulching, Hidrogel, Palma) para salvar a lavoura."
+        if st.button("🌳 Plano de Ação Ecológico", use_container_width=True):
+            with st.spinner("Analisando indicadores ambientais..."):
+                
+                # Prompt Engenharia: Focado em semiárido e água
+                prompt_eco = (
+                    f"Crie um protocolo de manejo para o Semiárido Brasileiro.\n"
+                    f"Condições: Cultura {d['Cultura']}, Solo {d['Tipo_Solo']}.\n"
+                    f"Clima Atual: Umidade do Solo em {d['Solo_Umid']}% (Crítico < 30) e Temp {d['Temperatura']}°C.\n"
+                    f"Gere 3 ações práticas focadas em:\n"
+                    f"1. Retenção de Água (ex: Mulching, Hidrogel).\n"
+                    f"2. Matéria Orgânica (ex: Esterco, Compostagem).\n"
+                    f"3. Consórcio ou Rotação ideal para este solo."
                 )
-                try:
-                    agentes = get_agents()
-                    res = agentes["ecologico"].chat(prompt)
-                    st.info("Plano de Ação Sustentável:")
-                    st.markdown(res)
-                except Exception as e:
-                    st.error(f"Erro na API: {e}")
+                
+                res = executar_crew(
+                    role="Engenheiro Agroecológico",
+                    goal="Restaurar a vida do solo e maximizar o uso da água.",
+                    backstory="Especialista em Agricultura Sintrópica e convivência com o Semiárido. Foco em soluções naturais.",
+                    input_usuario=prompt_eco
+                )
+                
+                st.info("Plano Sustentável:")
+                st.markdown(res)
 
 # ABA 2: CHATBOT
 with tab2:
-    st.subheader("Assistente de Campo")
-    st.caption("Tire dúvidas operacionais. Ex: 'Como combater a lagarta do cartucho?'")
+    st.subheader("Assistente de Campo YBY")
+    st.caption("Tire dúvidas sobre pragas, doenças e operações.")
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -170,11 +195,15 @@ with tab2:
 
         with st.chat_message("assistant"):
             with st.spinner("Consultando base técnica..."):
-                try:
-                    agentes = get_agents()
-                    # O agente 'chat' já tem o guardrail no prompt
-                    response = agentes["chat"].chat(user_input)
-                    st.markdown(response)
-                    st.session_state.messages.append({"role": "assistant", "content": response})
-                except Exception as e:
-                    st.error(f"Erro de conexão: {e}")
+                res = executar_crew(
+                    role="Assistente Técnico Virtual",
+                    goal="Responder dúvidas do produtor de forma simples e direta.",
+                    backstory=(
+                        "Você é um assistente amigável para produtores rurais. "
+                        "Responda apenas sobre agricultura. "
+                        "Se perguntarem sobre outros assuntos, recuse educadamente."
+                    ),
+                    input_usuario=user_input
+                )
+                st.markdown(res)
+                st.session_state.messages.append({"role": "assistant", "content": res})
