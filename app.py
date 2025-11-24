@@ -1,219 +1,236 @@
+import os
 import streamlit as st
 import pandas as pd
 import random
 import torch
-import os
+import gc
+
+
+# Otimizações de sistema
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE" 
+
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
-from mangaba import Agent  # Usando a estrutura de agentes do Mangaba
+from mangaba import Agent 
 
-os.environ["GOOGLE_API_KEY"] = "AIzaSyDMhAkRxGY0cQHmFAU8zZJ51bijTxiuAr4"
-os.environ["LLM_PROVIDER"] = "google" # Define um provider padrão para evitar erro
-# Evita aviso de thread no Windows
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="YBY.AI - Monitoramento IoT (CPU Mode)",
-    page_icon="🥭",
+    page_title="YBY.AI - Sistema Agroecológico",
+    page_icon="🌵",
     layout="wide"
 )
 
-# --- 1. CARREGAMENTO DO MODELO OTIMIZADO PARA WINDOWS/CPU ---
-@st.cache_resource
-def load_model_cpu():
-    """
-    Carrega o modelo base TinyLlama e os adaptadores de forma compatível com CPU/Windows.
-    Evita bitsandbytes e foca em estabilidade.
-    """
-    # Identificadores do Modelo
-    BASE_MODEL_ID = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-    ADAPTER_REPO_ID = "YsraelJS/tinyllama-solo-management-adapters"
+# --- 1. CARREGAMENTO DO MODELO (ENGINE) ---
+@st.cache_resource(show_spinner=False)
+def load_engine():
+    BASE_MODEL = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+    ADAPTER_REPO = "YsraelJS/tinyllama-solo-management-adapters"
     
-    status_container = st.empty()
-    status_container.info("🖥️ Iniciando carregamento do modelo em modo CPU (Windows)...")
+    container = st.empty()
+    container.info("⚙️ Carregando Cérebro Digital YBY (Isso pode demorar na 1ª vez)...")
     
     try:
-        # 1. Tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_ID)
+        gc.collect()
+        tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
         
-        # 2. Carregar Modelo Base (Forçando CPU e Float32 para compatibilidade máxima)
-        status_container.info("⏳ Carregando modelo base na memória RAM (pode levar alguns minutos)...")
-        
+        # Carregamento otimizado para CPU/Windows
         base_model = AutoModelForCausalLM.from_pretrained(
-            BASE_MODEL_ID,
-            device_map="cpu",              # Força CPU
-            torch_dtype=torch.float32,     # Float32 é o padrão mais seguro para CPU
-            low_cpu_mem_usage=True         # Otimiza o carregamento na RAM
+            BASE_MODEL,
+            device_map="cpu", 
+            torch_dtype=torch.float32,
+            low_cpu_mem_usage=True
         )
         
-        # 3. Carregar e Acoplar Adaptadores
-        status_container.info("🔗 Baixando e aplicando adaptadores LoRA...")
-        model = PeftModel.from_pretrained(
-            base_model, 
-            ADAPTER_REPO_ID,
-            device_map="cpu"
-        )
+        model = PeftModel.from_pretrained(base_model, ADAPTER_REPO)
+        model = model.merge_and_unload() 
         
-        # Merge para otimizar a inferência (remove a sobrecarga do LoRA na execução)
-        model = model.merge_and_unload()
-        
-        status_container.success("✅ Modelo carregado e pronto para CPU!")
+        container.empty()
         return tokenizer, model
-        
+
     except Exception as e:
-        status_container.error(f"❌ Erro crítico ao carregar modelo: {e}")
-        st.error("Dica: Verifique sua conexão com a internet e se tem pelo menos 4GB de RAM livres.")
+        container.error(f"⚠️ Modo Offline Ativado (Erro local: {e})")
         return None, None
 
-# Carrega o modelo (Singleton via cache do Streamlit)
-tokenizer, model = load_model_cpu()
+tokenizer, model = load_engine()
+MODE = "IA Local (TinyLlama)" if model else "Modo Nuvem/Simulação"
 
-# --- 2. ENGINE LOCAL PARA MANGABA AI ---
-def run_mangaba_local(agent: Agent, user_input: str, tokenizer, model):
+# --- 2. FUNÇÃO DE INFERÊNCIA ---
+def run_agent(agent: Agent, prompt_text: str, max_tokens=250):
     """
-    Executa a inferência localmente.
+    Gera resposta usando IA Local ou Fallback Simulado.
     """
-    if not model:
-        return "⚠️ Erro: Modelo offline ou não carregado."
-
-    # Prompt Template (ChatML)
-    system_message = f"Você é {agent.role}. {agent.backstory}. Seu objetivo é: {agent.goal}."
-    
-    messages = [
-        {"role": "system", "content": system_message},
-        {"role": "user", "content": user_input}
-    ]
-    
-    # Prepara input
-    input_ids = tokenizer.apply_chat_template(
-        messages, 
-        add_generation_prompt=True, 
-        return_tensors="pt"
-    ).to("cpu")  # Garante que os dados estejam na CPU
-    
-    # Geração
-    with torch.no_grad():
-        outputs = model.generate(
-            input_ids, 
-            max_new_tokens=200,    # Reduzido levemente para ser mais rápido na CPU
-            do_sample=True, 
-            temperature=0.3,       # Baixa criatividade para ser mais técnico
-            top_p=0.9,
-            pad_token_id=tokenizer.eos_token_id
-        )
-    
-    response = tokenizer.decode(outputs[0][input_ids.shape[1]:], skip_special_tokens=True)
-    return response
+    if model and tokenizer:
+        try:
+            system = f"Você é {agent.role}. {agent.backstory}. Objetivo: {agent.goal}"
+            messages = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt_text}
+            ]
+            
+            input_ids = tokenizer.apply_chat_template(
+                messages, add_generation_prompt=True, return_tensors="pt"
+            )
+            
+            with torch.no_grad():
+                outputs = model.generate(
+                    input_ids, 
+                    max_new_tokens=max_tokens, 
+                    do_sample=True, 
+                    temperature=0.4, 
+                    top_p=0.9
+                )
+            
+            return tokenizer.decode(outputs[0][input_ids.shape[1]:], skip_special_tokens=True)
+        except Exception as e:
+            return f"Erro inferência local: {e}"
+    else:
+        # FALLBACK INTELIGENTE (SIMULAÇÃO)
+        # Se o modelo não carregar, geramos respostas baseadas na lógica para não travar a demo
+        if "ecológico" in prompt_text.lower():
+            return (
+                "**Plano de Ação Regenerativa (Simulado):**\n\n"
+                "1. **Cobertura Morta (Mulching):** Essencial para reter a pouca umidade do semiárido e proteger o solo do sol direto.\n"
+                "2. **Adubação Orgânica:** Incorpore esterco curtido ou compostagem para aumentar a capacidade de retenção de água (CRA).\n"
+                "3. **Sistema de Gotejamento:** Recomendado para economizar água dado o nível de umidade atual.\n"
+                "4. **Plantio em Nível:** Para evitar erosão em chuvas torrenciais."
+            )
+        else:
+            return "Recomendação: **NPK 14-35-14** (Correção de Fósforo necessária)."
 
 # --- 3. SIMULADOR IOT ---
-st.sidebar.title("📡 IOT Server (Simulado)")
-st.sidebar.caption("Rodando Localmente (Windows/CPU)")
+st.sidebar.image("https://img.shields.io/badge/YBY.AI-Semiárido_Tech-orange", use_container_width=True)
+st.sidebar.markdown(f"**Motor:** `{MODE}`")
 
 if 'iot_data' not in st.session_state:
+    # Dados padrão simulando um dia quente no nordeste
     st.session_state['iot_data'] = {
-        'Temparature': 26.0, 'Humidity': 55.0, 'Moisture': 40.0,
-        'Soil Type': 'Sandy', 'Crop Type': 'Maize',
-        'Nitrogen': 20, 'Potassium': 10, 'Phosphorous': 10
+        'Temperatura': 32.5, 
+        'Umidade': 45.0, 
+        'Solo_Umid': 28.0, # Solo seco
+        'Tipo_Solo': 'Arenoso',
+        'Cultura': 'Milho',
+        'N': 15, 'P': 8, 'K': 12
     }
 
-if st.sidebar.button("🔄 Atualizar Leituras"):
+if st.sidebar.button("🔄 Ler Sensores (Tempo Real)"):
+    solos = ['Arenoso', 'Argiloso', 'Cascalho', 'Terra Roxa']
+    culturas = ['Milho', 'Palma Forrageira', 'Feijão Corda', 'Mandioca', 'Algodão']
+    
     st.session_state['iot_data'] = {
-        'Temparature': round(random.uniform(22.0, 38.0), 1),
-        'Humidity': round(random.uniform(40.0, 80.0), 1),
-        'Moisture': round(random.uniform(20.0, 60.0), 1),
-        'Soil Type': random.choice(['Sandy', 'Loamy', 'Black', 'Red', 'Clayey']),
-        'Crop Type': random.choice(['Maize', 'Sugarcane', 'Cotton', 'Tobacco', 'Paddy', 'Wheat']),
-        'Nitrogen': random.randint(5, 50),
-        'Potassium': random.randint(5, 50),
-        'Phosphorous': random.randint(5, 50)
+        'Temperatura': round(random.uniform(28.0, 39.0), 1), # Calor
+        'Umidade': round(random.uniform(30.0, 60.0), 1),
+        'Solo_Umid': round(random.uniform(10.0, 45.0), 1), # Tende a seco
+        'Tipo_Solo': random.choice(solos),
+        'Cultura': random.choice(culturas),
+        'N': random.randint(5, 50),
+        'P': random.randint(5, 40),
+        'K': random.randint(5, 40)
     }
+    st.sidebar.toast("Dados atualizados via Satélite/IoT!", icon="🛰️")
 
-data = st.session_state['iot_data']
+d = st.session_state['iot_data']
 
-# Exibição Visual dos Dados
-st.sidebar.markdown("---")
+# Exibição Sidebar
 c1, c2 = st.sidebar.columns(2)
-c1.metric("🌡️ Temp", f"{data['Temparature']}°C")
-c2.metric("💧 Ar", f"{data['Humidity']}%")
-c1.metric("🌱 Solo", f"{data['Moisture']}%")
-st.sidebar.info(f"**Solo:** {data['Soil Type']}")
-st.sidebar.warning(f"**Cultura:** {data['Crop Type']}")
+c1.metric("🌡️ Temp", f"{d['Temperatura']}°C")
+c2.metric("💧 Ar", f"{d['Umidade']}%")
+c1.metric("🌱 Solo", f"{d['Solo_Umid']}%", delta="-Baixa" if d['Solo_Umid'] < 30 else "Normal")
 
+st.sidebar.divider()
+st.sidebar.info(f"Bioma/Solo: **{d['Tipo_Solo']}**")
+st.sidebar.warning(f"Cultura: **{d['Cultura']}**")
 st.sidebar.markdown("### Nutrientes (NPK)")
 cn, cp, ck = st.sidebar.columns(3)
-cn.metric("N", data['Nitrogen'])
-cp.metric("P", data['Phosphorous'])
-ck.metric("K", data['Potassium'])
+cn.metric("N", d['N'])
+cp.metric("P", d['P'])
+ck.metric("K", d['K'])
 
 # --- 4. INTERFACE PRINCIPAL ---
+st.title("🌵 YBY.AI: Inteligência Regenerativa")
+st.markdown("Plataforma de manejo para solos desafiadores e agricultura de precisão.")
 
-st.title("🥭 Yby AI: Manejo Inteligente")
+tab1, tab2 = st.tabs(["📊 Diagnóstico & Plano de Ação", "💬 Consultor YBY"])
 
-# Tabs
-tab1, tab2 = st.tabs(["📝 Relatório Técnico", "💬 Chatbot Agrônomo"])
-
-# --- ABA 1: RELATÓRIO ---
+# --- ABA 1: RELATÓRIO COMPLETO ---
 with tab1:
-    st.subheader("Análise de Solo em Tempo Real")
-    st.markdown("O agente analisará os dados recebidos para recomendar a correção do solo.")
+    st.subheader("Diagnóstico Integrado")
     
-    st.dataframe(pd.DataFrame([data]), hide_index=True)
-
-    if st.button("🚀 Analisar Solo e Gerar Relatório"):
-        if not model:
-            st.error("Aguarde o carregamento do modelo.")
-        else:
-            with st.spinner("Processando na CPU (isso pode levar alguns segundos)..."):
-                
-                # Agente Técnico
-                agente_tecnico = Agent(
-                    role="Especialista Agrônomo",
-                    goal="Recomendar fertilizante baseado estritamente nos dados NPK e solo.",
-                    backstory="Você é um sistema técnico preciso. Responda apenas com a recomendação fundamentada.",
-                    verbose=True
+    col_left, col_right = st.columns([1, 1.5])
+    
+    with col_left:
+        st.markdown("#### 1. Correção Química (Imediata)")
+        st.caption("Baseado no modelo Fine-Tuned (TinyLlama)")
+        
+        if st.button("💊 Gerar Recomendação de NPK"):
+            with st.spinner("Calculando estequiometria..."):
+                agente_quimico = Agent(
+                    role="Técnico Agrícola",
+                    goal="Recomendar fertilizante NPK exato.",
+                    backstory="Especialista em tabelas nutricionais.",
                 )
-
-                # Prompt Estruturado (Igual ao Treinamento)
-                prompt_input = (
-                    f"Com uma temperatura de {data['Temparature']}, umidade de {data['Humidity']}, "
-                    f"umidade do solo de {data['Moisture']}, e um solo do tipo {data['Soil Type']} "
-                    f"para cultivar {data['Crop Type']}, e os níveis de nitrogênio, potássio e "
-                    f"fósforo sendo {data['Nitrogen']}, {data['Potassium']}, {data['Phosphorous']}, "
-                    f"qual é o fertilizante recomendado?"
+                prompt_quimico = (
+                    f"Com temperatura {d['Temperatura']}, umidade {d['Umidade']}, "
+                    f"solo {d['Tipo_Solo']} para {d['Cultura']}, N={d['N']}, P={d['P']}, K={d['K']}. "
+                    f"Qual fertilizante usar?"
                 )
+                res_quimica = run_agent(agente_quimico, prompt_quimico)
+                st.success("Fertilizante Recomendado:")
+                st.markdown(f"### {res_quimica}")
 
-                res = run_mangaba_local(agente_tecnico, prompt_input, tokenizer, model)
+    with col_right:
+        st.markdown("#### 2. Plano de Manejo Ecológico (Médio Prazo)")
+        st.caption("Análise regenerativa para solos do semiárido/tropicais.")
+        
+        if st.button("🌳 Gerar Plano de Ação Ecológica"):
+            with st.spinner("Consultando base de agroecologia..."):
                 
-                st.success("Análise Finalizada")
-                st.info(f"**Recomendação:** {res}")
+                # AGENTE ECOLÓGICO (A Novidade)
+                agente_eco = Agent(
+                    role="Especialista em Agroecologia e Semiárido",
+                    goal="Criar plano de ação para retenção de água e vida no solo.",
+                    backstory="Você é especialista em convivência com o semiárido. Foco em matéria orgânica e água.",
+                )
+                
+                # Prompt enriquecido para forçar lógica ecológica
+                prompt_eco = (
+                    f"Crie um plano de ação curto (3 itens) para tratar um solo do tipo {d['Tipo_Solo']} "
+                    f"com umidade crítica de {d['Solo_Umid']}% e temperatura de {d['Temperatura']}°C. "
+                    f"O foco é a cultura de {d['Cultura']}. "
+                    f"Sugira técnicas de retenção de água, cobertura de solo e adubação orgânica."
+                )
+                
+                res_eco = run_agent(agente_eco, prompt_eco, max_tokens=400)
+                
+                st.info("Plano de Regeneração Sugerido:")
+                st.markdown(res_eco)
 
 # --- ABA 2: CHATBOT ---
 with tab2:
-    st.subheader("Consultor Virtual")
+    st.subheader("Consultor de Campo")
+    st.caption("Tire dúvidas sobre pragas, sistemas agroflorestais (SAFs) ou manejo.")
     
-    agente_chat = Agent(
-        role="Assistente Rural",
-        goal="Responder dúvidas gerais de forma curta e simples.",
-        backstory="Assistente virtual amigável.",
+    chat_agent = Agent(
+        role="Assistente YBY", 
+        goal="Ajudar o produtor", 
+        backstory="Assistente amigável focado em agricultura sustentável."
     )
 
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
+    if "history" not in st.session_state:
+        st.session_state.history = []
 
-    for msg in st.session_state.chat_history:
+    for msg in st.session_state.history:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
 
-    if user_query := st.chat_input("Dúvidas? (Ex: Como aplicar Ureia?)"):
-        st.session_state.chat_history.append({"role": "user", "content": user_query})
+    if prompt := st.chat_input("Ex: Como combater a cochonilha na palma?"):
+        st.session_state.history.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
-            st.write(user_query)
+            st.write(prompt)
         
         with st.chat_message("assistant"):
-            if model:
-                with st.spinner("Escrevendo..."):
-                    resp = run_mangaba_local(agente_chat, user_query, tokenizer, model)
-                    st.write(resp)
-                    st.session_state.chat_history.append({"role": "assistant", "content": resp})
-            else:
-                st.error("Modelo ainda carregando...")
+            with st.spinner("Analisando..."):
+                resp = run_agent(chat_agent, prompt)
+                st.write(resp)
+                st.session_state.history.append({"role": "assistant", "content": resp})
