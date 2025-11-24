@@ -6,3 +6,5 @@ link do modelo:
 https://huggingface.co/YsraelJS/tinyllama-solo-management-adapters
 <br>link do codigo do fine tuning: 
 https://colab.research.google.com/drive/1Tv8EkiVqUuTTxvrXBRHP35yqqqlUA7EE#scrollTo=NMi8ctctSMdK
+<br> 
+MVP : https://ybyaisolution.streamlit.app/
