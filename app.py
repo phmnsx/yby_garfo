@@ -6,11 +6,6 @@ import torch
 import gc
 
 
-# Otimizações de sistema
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE" 
-
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 from mangaba import Agent 
