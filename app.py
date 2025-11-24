@@ -61,7 +61,6 @@ def executar_crew(role, goal, backstory, input_usuario):
         return f"❌ Erro na execução da IA: {str(e)}. Verifique sua Chave de API."
 
 # --- 2. SIMULADOR IOT (BARRA LATERAL) ---
-st.sidebar.image("https://img.shields.io/badge/YBY.AI-Powered_by_Gemini-green", use_container_width=True)
 st.sidebar.markdown("### 📡 Telemetria em Tempo Real")
 
 # Inicialização do Estado
